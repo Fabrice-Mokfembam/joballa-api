@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": [
+    "src/main.ts",
+    "src/app.module.ts",
+    "src/instrument.ts",
+    "src/prisma/**/*.ts",
+    "src/common/**/*.ts",
+    "src/modules/auth/**/*.ts",
+    "src/modules/files/**/*.ts",
+    "src/modules/health/**/*.ts",
+    "src/modules/v2/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "**/*spec.ts",
+    "src/common/types/admin-context.type.ts"
+  ]
+}

@@ -1,0 +1,14 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+/generated/prisma
+dist/
+*.tsbuildinfo
+helper docs/
+
+# Frontend handoff / reply docs (local only; not part of backend repo)
+docsfromfrontend/
+
+# Local API test run reports (not versioned)
+test-reports/
