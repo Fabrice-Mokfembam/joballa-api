@@ -7,6 +7,7 @@ import {
   type EmployerDocument,
   type Job,
   type KycSubmission,
+  JobPostedByType,
   type Payment,
   type User,
 } from '@prisma/client';
@@ -127,6 +128,8 @@ export function mapJobRow(
   job: Job & {
     department: { id: string; name: string; slug: string } | null;
     owner: User & {
+      photoUrl: string | null;
+      workerProfile: { fullName: string | null } | null;
       employerProfile: {
         id: string;
         companyName: string;
@@ -135,6 +138,7 @@ export function mapJobRow(
         country: string | null;
       } | null;
     };
+    _count?: { applications: number };
   },
   extras?: {
     rejectionReason?: {
@@ -150,6 +154,14 @@ export function mapJobRow(
     } | null;
   },
 ) {
+  const isWorkerPoster = job.postedByType === JobPostedByType.WORKER;
+  const posterName = isWorkerPoster
+    ? (job.owner.workerProfile?.fullName ?? 'Unknown')
+    : (job.owner.employerProfile?.companyName ?? 'Unknown');
+  const posterPhotoUrl = isWorkerPoster
+    ? job.owner.photoUrl
+    : (job.owner.employerProfile?.companyLogoUrl ?? job.owner.photoUrl);
+
   return {
     id: job.id,
     title: job.title,
@@ -184,8 +196,9 @@ export function mapJobRow(
     employer: {
       id: job.owner.employerProfile?.id ?? job.ownerId,
       userId: job.ownerId,
-      companyName: job.owner.employerProfile?.companyName ?? 'Unknown',
-      companyLogoUrl: job.owner.employerProfile?.companyLogoUrl ?? null,
+      companyName: posterName,
+      companyLogoUrl: posterPhotoUrl,
+      photoUrl: job.owner.photoUrl,
       city: job.owner.employerProfile?.city ?? job.city,
       country: job.owner.employerProfile?.country ?? job.country,
     },
@@ -198,6 +211,9 @@ export function mapJobRow(
         }
       : null,
     submissionScore: extras?.submissionScore ?? null,
+    applicationsCount: job._count?.applications ?? 0,
+    createdByAdmin: job.createdByAdminId != null,
+    createdByAdminId: job.createdByAdminId,
     createdAt: job.createdAt.toISOString(),
   };
 }

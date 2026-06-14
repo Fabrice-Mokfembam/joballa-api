@@ -183,7 +183,7 @@ export class WorkerV2Service {
       },
       recentApplications: applications.map((a) => this.mapApplicationList(a)),
       suggestedJobs: suggestedJobs.map((j) =>
-        this.withSavedFlags(this.mapJobCard(j), savedRows, j.id),
+        this.withSavedFlags(this.mapJobCard(j, user.id), savedRows, j.id),
       ),
       nextActions: [
         {
@@ -271,6 +271,11 @@ export class WorkerV2Service {
         include: {
           department: true,
           owner: { include: { employerProfile: true, workerProfile: true } },
+          applications: {
+            where: { workerId: user.id },
+            select: { id: true, status: true },
+            take: 1,
+          },
         },
       }),
       this.prisma.job.count({ where }),
@@ -281,7 +286,7 @@ export class WorkerV2Service {
     ]);
     return paginated(
       jobs.map((j) =>
-        this.withSavedFlags(this.mapJobCard(j), saved, j.id, false),
+        this.withSavedFlags(this.mapJobCard(j, user.id), saved, j.id, false),
       ),
       total,
       page,
@@ -304,8 +309,15 @@ export class WorkerV2Service {
       }),
     ]);
     if (!job) throw new NotFoundException('Job not found.');
+    const viewerApplication = job.applications[0] ?? null;
+    const card = this.mapJobCard(job, user.id);
     return {
-      ...this.withSavedFlags(this.mapJobCard(job), saved ? [saved] : [], jobId),
+      ...this.withSavedFlags(card, saved ? [saved] : [], jobId),
+      ownerId: job.ownerId,
+      viewerIsOwner: job.ownerId === user.id,
+      isOwnJob: job.ownerId === user.id,
+      hasApplied: Boolean(viewerApplication),
+      applicationId: viewerApplication?.id ?? null,
       description: job.description,
       requirements: job.requirements,
       responsibilities: job.responsibilities,
@@ -1035,6 +1047,11 @@ export class WorkerV2Service {
               owner: {
                 include: { employerProfile: true, workerProfile: true },
               },
+              applications: {
+                where: { workerId: user.id },
+                select: { id: true, status: true },
+                take: 1,
+              },
             },
           },
         },
@@ -1043,7 +1060,7 @@ export class WorkerV2Service {
     ]);
     return paginated(
       rows.map((r) =>
-        this.withSavedFlags(this.mapJobCard(r.job), rows, r.jobId, true),
+        this.withSavedFlags(this.mapJobCard(r.job, user.id), rows, r.jobId, true),
       ),
       total,
       page,
@@ -1326,6 +1343,30 @@ export class WorkerV2Service {
       isPrimary: a.isPrimary,
       createdAt: a.createdAt.toISOString(),
     }));
+    const mappedWorkExperiences = sortWorkOrEducationDesc(workExperiences).map((row) =>
+      this.mapProfileWorkExperience(row),
+    );
+    const mappedEducation = sortWorkOrEducationDesc(education).map((row) =>
+      this.mapProfileEducation(row),
+    );
+    const mappedCertifications = sortCertificationsDesc(certifications).map((row) =>
+      this.mapProfileCertification(row),
+    );
+    const mappedDocuments = supportingDocuments.map((d) => this.mapSupportingDocument(d));
+    const mappedKyc = kyc
+      ? [
+          {
+            id: kyc.id,
+            documentType: kyc.kycType,
+            status: verificationToApi(kyc.status),
+            frontIdImageUrl: kyc.frontUrl,
+            backIdImageUrl: kyc.backUrl,
+            selfieImageUrl: kyc.selfieUrl,
+            rejectionReason: kyc.rejectionReason,
+            createdAt: kyc.createdAt.toISOString(),
+          },
+        ]
+      : [];
     return {
       id: p.id,
       userId: full.id,
@@ -1338,11 +1379,13 @@ export class WorkerV2Service {
       dateOfBirth: p.dateOfBirth?.toISOString().slice(0, 10) ?? null,
       professionalTitle: p.professionalTitle,
       shortBio: p.shortBio,
+      summary: p.shortBio,
       country: p.country,
       region: p.region,
       city: p.city,
       languages: p.languages,
       skills: p.skills,
+      industries: p.preferredJobCategories,
       preferredJobCategories: p.preferredJobCategories,
       preferredJobTypes: p.preferredJobTypes.map(employmentTypeToApi),
       availabilityStatus: p.availabilityStatus,
@@ -1353,14 +1396,16 @@ export class WorkerV2Service {
       profileCompletenessBreakdown: breakdown,
       profileStrengthBreakdown: breakdown,
       verificationStatus: verificationToApi(p.verificationStatus),
-      workExperiences: sortWorkOrEducationDesc(workExperiences),
-      education: sortWorkOrEducationDesc(education),
-      certifications: sortCertificationsDesc(certifications),
-      supportingDocuments: supportingDocuments.map((d) =>
-        this.mapSupportingDocument(d),
-      ),
+      workExperiences: mappedWorkExperiences,
+      workHistories: mappedWorkExperiences,
+      education: mappedEducation,
+      educations: mappedEducation,
+      certifications: mappedCertifications,
+      supportingDocuments: mappedDocuments,
+      documents: mappedDocuments,
       paymentMethods,
       paymentAccounts: paymentMethods,
+      kycSubmissions: mappedKyc,
       latestKyc: kyc
         ? {
             ...kyc,
@@ -2083,7 +2128,20 @@ export class WorkerV2Service {
     return user;
   }
 
-  private mapJobCard(job: any) {
+  private mapJobCard(job: any, viewerUserId?: string) {
+    const ownerId =
+      job.ownerId != null
+        ? String(job.ownerId)
+        : job.owner?.id != null
+          ? String(job.owner.id)
+          : undefined;
+    const viewerIsOwner = Boolean(
+      viewerUserId && ownerId && String(viewerUserId) === ownerId,
+    );
+    const viewerApplication = Array.isArray(job.applications)
+      ? job.applications[0]
+      : undefined;
+    const ownerDisplayName = this.ownerName(job);
     return {
       id: job.id,
       title: job.title,
@@ -2095,8 +2153,22 @@ export class WorkerV2Service {
             category: departmentCategoryToApi(job.department.category),
           }
         : null,
-      ownerName: this.ownerName(job),
+      ownerName: ownerDisplayName,
       ownerVerified: this.ownerVerified(job),
+      ownerId,
+      viewerIsOwner,
+      isOwnJob: viewerIsOwner,
+      hasApplied: Boolean(viewerApplication),
+      applicationId: viewerApplication?.id ?? null,
+      owner: ownerId
+        ? {
+            id: ownerId,
+            name: ownerDisplayName,
+            displayName: ownerDisplayName,
+            logoUrl: job.owner?.photoUrl ?? null,
+            verified: this.ownerVerified(job),
+          }
+        : undefined,
       city: job.city,
       region: job.region,
       country: job.country,
@@ -2112,6 +2184,74 @@ export class WorkerV2Service {
       requiredSkills: job.requiredSkills,
       matchScore: null,
       postedAt: job.createdAt.toISOString(),
+    };
+  }
+
+  private mapProfileWorkExperience(row: {
+    id: string;
+    companyName: string;
+    jobTitle: string;
+    location?: string | null;
+    startDate: Date;
+    endDate?: Date | null;
+    isCurrent: boolean;
+    description?: string | null;
+  }) {
+    return {
+      id: row.id,
+      companyName: row.companyName,
+      jobTitle: row.jobTitle,
+      city: row.location ?? undefined,
+      location: row.location ?? undefined,
+      startDate: row.startDate.toISOString().slice(0, 10),
+      endDate: row.endDate?.toISOString().slice(0, 10) ?? null,
+      isCurrent: row.isCurrent,
+      description: row.description ?? undefined,
+    };
+  }
+
+  private mapProfileEducation(row: {
+    id: string;
+    institutionName: string;
+    degree?: string | null;
+    fieldOfStudy?: string | null;
+    startDate: Date;
+    endDate?: Date | null;
+    isCurrent: boolean;
+    description?: string | null;
+  }) {
+    return {
+      id: row.id,
+      institution: row.institutionName,
+      institutionName: row.institutionName,
+      degree: row.degree ?? undefined,
+      fieldOfStudy: row.fieldOfStudy ?? undefined,
+      startDate: row.startDate.toISOString().slice(0, 10),
+      endDate: row.endDate?.toISOString().slice(0, 10) ?? null,
+      isCurrent: row.isCurrent,
+      description: row.description ?? undefined,
+    };
+  }
+
+  private mapProfileCertification(row: {
+    id: string;
+    name: string;
+    issuer?: string | null;
+    issueDate?: Date | null;
+    expiryDate?: Date | null;
+    credentialUrl?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: row.id,
+      name: row.name,
+      issuer: row.issuer ?? undefined,
+      issueDate: row.issueDate?.toISOString().slice(0, 10),
+      expiryDate: row.expiryDate?.toISOString().slice(0, 10) ?? null,
+      credentialUrl: row.credentialUrl ?? null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
     };
   }
 

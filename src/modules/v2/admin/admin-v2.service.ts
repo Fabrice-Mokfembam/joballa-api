@@ -6,15 +6,26 @@ import {
   ApplicationStatus,
   DepartmentCategory,
   DisputeStatus,
+  EmploymentType,
+  ExperienceLevel,
+  JobPostedByType,
   JobStatus,
+  PayStructure,
   PreferredLanguage,
   Role,
   SubmissionTargetType,
+  SubmissionTier,
   VerificationStatus,
+  WorkMode,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import type { Request } from 'express';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { FilesService } from '../../files/services/files.service';
+import {
+  ALLOWED_MIME_TYPES,
+  MAX_FILE_SIZES,
+} from '../../files/files.constants';
 import {
   ADMIN_PERM,
   defaultPermissionsForRole,
@@ -55,6 +66,14 @@ import {
   profileScopeWhere,
   slugify,
 } from './admin-mappers';
+import { parseEnum } from '../shared/api-format';
+import {
+  parseOptionalDepartmentId,
+  parseOptionalJobDate,
+  parseRequiredDepartmentId,
+  requiredEnumForPublish,
+  validateJobForPublish,
+} from '../shared/job-validation.util';
 
 @Injectable()
 export class AdminV2Service {
@@ -62,6 +81,7 @@ export class AdminV2Service {
     private readonly prisma: PrismaService,
     private readonly adminContext: AdminContextService,
     private readonly audit: AdminAuditService,
+    private readonly filesService: FilesService,
   ) {}
 
   private async sessionPayload(ctx: AdminContext) {
@@ -844,7 +864,8 @@ export class AdminV2Service {
         where,
         include: {
           department: true,
-          owner: { include: { employerProfile: true } },
+          owner: { include: { employerProfile: true, workerProfile: true } },
+          _count: { select: { applications: true } },
         },
         orderBy: {
           [q.sort === 'title'
@@ -886,6 +907,123 @@ export class AdminV2Service {
     return adminPaged(mapped, q.page, q.limit, total);
   }
 
+  async createJob(
+    ctx: AdminContext,
+    body: Record<string, unknown>,
+    req: Request,
+  ) {
+    this.adminContext.requirePermission(ctx, ADMIN_PERM.CREATE_PROFILES);
+    const ownerUserId = String(body.ownerUserId ?? '').trim();
+    if (!ownerUserId) adminBadRequest('ownerUserId is required.');
+
+    const owner = await this.prisma.user.findUnique({
+      where: { id: ownerUserId },
+      include: { workerProfile: true, employerProfile: true },
+    });
+    if (!owner) adminNotFound('Profile owner not found.');
+    if (!owner.createdByAdminId) {
+      adminForbidden('Jobs can only be created for admin-created profiles.');
+    }
+    if (!ctx.isSuperAdmin && owner.createdByAdminId !== ctx.id) {
+      adminForbidden('You can only create jobs for profiles you created.');
+    }
+
+    const departmentId = parseRequiredDepartmentId(body.departmentId);
+    const employmentType = requiredEnumForPublish(
+      EmploymentType,
+      body.employmentType,
+      'employmentType',
+    );
+    const workMode = parseEnum(WorkMode, body.workMode) ?? WorkMode.ONSITE;
+    const payStructure = requiredEnumForPublish(
+      PayStructure,
+      body.payStructure,
+      'payStructure',
+    );
+    const payAmount = Number(body.payAmount ?? 0);
+    const startNow = Boolean(body.startNow);
+    const startDate = parseOptionalJobDate(body.startDate) ?? null;
+    const title = String(body.title ?? '').trim();
+    const city = String(body.city ?? '').trim();
+    const description = String(body.description ?? '').trim();
+
+    validateJobForPublish({
+      status: JobStatus.DRAFT,
+      departmentId,
+      title,
+      employmentType,
+      workMode,
+      country: String(body.country ?? 'Cameroon'),
+      city,
+      payAmount,
+      payCurrency: String(body.payCurrency ?? 'XAF'),
+      payStructure,
+      description,
+      startDate,
+      startNow,
+    });
+
+    const postedByType =
+      owner.role === Role.EMPLOYER
+        ? JobPostedByType.COMPANY
+        : JobPostedByType.WORKER;
+
+    const job = await this.prisma.job.create({
+      data: {
+        ownerId: ownerUserId,
+        departmentId,
+        title,
+        employmentType,
+        workMode,
+        country: String(body.country ?? 'Cameroon'),
+        region: maybeString(body.region),
+        city,
+        neighbourhood: maybeString(body.neighbourhood),
+        payAmount,
+        payCurrency: String(body.payCurrency ?? 'XAF'),
+        payStructure,
+        experienceLevel: parseEnum(ExperienceLevel, body.experienceLevel),
+        startDate: startDate ?? undefined,
+        startNow,
+        duration: maybeString(body.duration),
+        description,
+        requirements: maybeStringArray(body.requirements) ?? [],
+        responsibilities: maybeStringArray(body.responsibilities) ?? [],
+        requiredSkills: maybeStringArray(body.requiredSkills) ?? [],
+        requestedDocuments: (body.requestedDocuments as object[] | undefined) ?? [],
+        numberOfOpenings: Math.max(1, Number(body.numberOfOpenings ?? 1)),
+        status: JobStatus.UNDER_REVIEW,
+        postedByType,
+        paymentManagedByJoballa: Boolean(body.paymentManagedByJoballa),
+        createdByAdminId: ctx.id,
+      },
+      include: {
+        department: true,
+        owner: { include: { employerProfile: true, workerProfile: true } },
+        _count: { select: { applications: true } },
+      },
+    });
+
+    await this.prisma.submissionScore.create({
+      data: {
+        targetType: SubmissionTargetType.JOB,
+        targetId: job.id,
+        score: 90,
+        tier: SubmissionTier.AUTO_APPROVED,
+      },
+    });
+
+    await this.audit.log(
+      ctx,
+      'jobs',
+      'created',
+      `Created job ${job.title} for admin profile ${ownerUserId}`,
+      req,
+    );
+
+    return adminOk(mapJobRow(job, await this.jobExtras(job.id)));
+  }
+
   async approveJob(ctx: AdminContext, jobId: string, req: Request) {
     this.adminContext.requirePermission(ctx, ADMIN_PERM.VERIFY_JOBS);
     const job = await this.prisma.job.findUnique({ where: { id: jobId } });
@@ -911,7 +1049,8 @@ export class AdminV2Service {
       where: { id: jobId },
       include: {
         department: true,
-        owner: { include: { employerProfile: true } },
+        owner: { include: { employerProfile: true, workerProfile: true } },
+        _count: { select: { applications: true } },
       },
     });
     return adminOk(mapJobRow(updated!, await this.jobExtras(jobId)));
@@ -952,7 +1091,8 @@ export class AdminV2Service {
       where: { id: jobId },
       include: {
         department: true,
-        owner: { include: { employerProfile: true } },
+        owner: { include: { employerProfile: true, workerProfile: true } },
+        _count: { select: { applications: true } },
       },
     });
     return adminOk(mapJobRow(updated!, await this.jobExtras(jobId)));
@@ -981,7 +1121,8 @@ export class AdminV2Service {
       where: { id: jobId },
       include: {
         department: true,
-        owner: { include: { employerProfile: true } },
+        owner: { include: { employerProfile: true, workerProfile: true } },
+        _count: { select: { applications: true } },
       },
     });
     if (!updated) adminNotFound('Job not found.');
@@ -1384,6 +1525,7 @@ export class AdminV2Service {
     id: string;
     email: string | null;
     phone: string | null;
+    photoUrl: string | null;
     accountStatus: AccountStatus;
     createdByAdminId: string | null;
     createdAt: Date;
@@ -1403,6 +1545,7 @@ export class AdminV2Service {
     employerProfile: {
       id: string;
       companyName: string;
+      companyLogoUrl?: string | null;
       description: string | null;
       city: string | null;
       region: string | null;
@@ -1424,7 +1567,9 @@ export class AdminV2Service {
         : user.employerProfile?.companyName,
       email: user.email,
       phone: user.phone,
-      photoUrl: null,
+      photoUrl: isWorker
+        ? user.photoUrl
+        : user.employerProfile?.companyLogoUrl ?? user.photoUrl,
       dateOfBirth: user.workerProfile?.dateOfBirth
         ? user.workerProfile.dateOfBirth.toISOString().slice(0, 10)
         : null,
@@ -1474,6 +1619,7 @@ export class AdminV2Service {
     ctx: AdminContext,
     body: Record<string, unknown>,
     req: Request,
+    file?: Express.Multer.File,
   ) {
     this.adminContext.requirePermission(ctx, ADMIN_PERM.CREATE_PROFILES);
     const profileType = String(body.profileType || '').toLowerCase();
@@ -1503,7 +1649,9 @@ export class AdminV2Service {
               workerProfile: {
                 create: {
                   fullName: String(body.fullName),
-                  professionalTitle: String(body.roleOrPosition || ''),
+                  professionalTitle: String(
+                    body.roleOrPosition || body.professionalSummary || '',
+                  ),
                   shortBio: body.shortBio ? String(body.shortBio) : null,
                   verificationStatus: VerificationStatus.VERIFIED,
                 },
@@ -1522,6 +1670,32 @@ export class AdminV2Service {
       },
       include: { workerProfile: true, employerProfile: true },
     });
+
+    if (file) {
+      if (!(ALLOWED_MIME_TYPES.IMAGES as readonly string[]).includes(file.mimetype)) {
+        adminBadRequest(
+          `Invalid file type. Allowed types: ${ALLOWED_MIME_TYPES.IMAGES.join(', ')}`,
+        );
+      }
+      if (file.size > MAX_FILE_SIZES.PROFILE_PHOTO) {
+        adminBadRequest('Profile photo is too large.');
+      }
+      if (profileType === 'worker') {
+        const uploaded = await this.filesService.uploadProfilePhoto(file, user.id);
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { photoUrl: uploaded.secureUrl },
+        });
+      } else if (user.employerProfile) {
+        const uploaded = await this.filesService.uploadEmployerLogo(file, user.id);
+        await this.prisma.employerProfile.update({
+          where: { id: user.employerProfile.id },
+          data: { companyLogoUrl: uploaded.secureUrl },
+        });
+      }
+    }
+
+    const fresh = await this.findProfileUser(user.id, ctx);
     await this.audit.log(
       ctx,
       'profiles',
@@ -1529,7 +1703,7 @@ export class AdminV2Service {
       `Created ${profileType} profile ${user.id}`,
       req,
     );
-    return adminOk(this.mapProfile(user));
+    return adminOk(this.mapProfile(fresh));
   }
 
   async updateProfile(
@@ -2196,4 +2370,15 @@ function resolveAdminPassword(value: unknown): string {
     adminBadRequest('Password must be at least 8 characters.');
   }
   return password;
+}
+
+function maybeString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const s = String(value).trim();
+  return s || undefined;
+}
+
+function maybeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map(String).filter(Boolean);
 }

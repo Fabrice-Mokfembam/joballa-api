@@ -10,9 +10,13 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { CurrentAdmin } from './decorators/current-admin.decorator';
 import { RequireAdminPermission } from './decorators/require-permission.decorator';
 import { ADMIN_PERM } from './admin.constants';
@@ -159,6 +163,16 @@ export class AdminV2Controller {
     @Req() req: Request,
   ) {
     return this.admin.rejectDocument(ctx, id, body, req);
+  }
+
+  @RequireAdminPermission(ADMIN_PERM.CREATE_PROFILES)
+  @Post('jobs')
+  createJob(
+    @CurrentAdmin() ctx: AdminContext,
+    @Body() body: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
+    return this.admin.createJob(ctx, body, req);
   }
 
   @RequireAdminPermission(ADMIN_PERM.MANAGE_JOBS)
@@ -328,12 +342,14 @@ export class AdminV2Controller {
 
   @RequireAdminPermission(ADMIN_PERM.CREATE_PROFILES)
   @Post('profiles')
+  @UseInterceptors(FileInterceptor('profilePhoto', { storage: memoryStorage() }))
   createProfile(
     @CurrentAdmin() ctx: AdminContext,
     @Body() body: Record<string, unknown>,
     @Req() req: Request,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.admin.createProfile(ctx, body, req);
+    return this.admin.createProfile(ctx, body, req, file);
   }
 
   @RequireAdminPermission(ADMIN_PERM.CREATE_PROFILES)

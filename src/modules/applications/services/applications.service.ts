@@ -13,7 +13,7 @@ import {
   UpdateApplicationStatusDto,
 } from '../dto/applications.dto';
 import { MIN_COMPLETENESS_TO_APPLY } from '../../workers/workers.constants';
-import { Prisma } from '@prisma/client';
+import { Prisma, VerificationStatus } from '@prisma/client';
 
 @Injectable()
 export class ApplicationsService {
@@ -56,6 +56,12 @@ export class ApplicationsService {
       throw new ForbiddenException(
         `Profile completeness is ${profile.profileCompleteness}%. ` +
           `A minimum of ${MIN_COMPLETENESS_TO_APPLY}% is required to apply.`,
+      );
+    }
+
+    if (profile.verificationStatus !== VerificationStatus.VERIFIED) {
+      throw new ForbiddenException(
+        'Identity verification (KYC) must be approved before applying to jobs.',
       );
     }
 

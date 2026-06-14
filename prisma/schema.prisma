@@ -671,6 +671,7 @@ model Job {
   adminNotes              String?          @map("admin_notes") @db.Text
   approvedByAdminId       String?          @map("approved_by_admin_id") @db.Uuid
   approvedAt              DateTime?        @map("approved_at")
+  createdByAdminId        String?          @map("created_by_admin_id") @db.Uuid
   createdAt               DateTime         @default(now()) @map("created_at")
   updatedAt               DateTime         @updatedAt @map("updated_at")
 

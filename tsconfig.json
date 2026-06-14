@@ -13,7 +13,6 @@
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",
-    // "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
@@ -21,5 +20,23 @@
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
-  }
+  },
+  "include": [
+    "src/main.ts",
+    "src/app.module.ts",
+    "src/instrument.ts",
+    "src/prisma/**/*.ts",
+    "src/common/**/*.ts",
+    "src/modules/auth/**/*.ts",
+    "src/modules/files/**/*.ts",
+    "src/modules/health/**/*.ts",
+    "src/modules/v2/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "**/*spec.ts",
+    "src/common/types/admin-context.type.ts"
+  ]
 }
