@@ -130,6 +130,13 @@ enum JobStatus {
   @@map("job_status")
 }
 
+enum JobPostedByType {
+  WORKER  @map("worker")
+  COMPANY @map("company")
+
+  @@map("job_posted_by_type")
+}
+
 enum InformalRequestStatus {
   SUBMITTED         @map("submitted")
   UNDER_REVIEW      @map("under_review")
@@ -659,6 +666,7 @@ model Job {
   requestedDocuments      Json?            @map("requested_documents")
   numberOfOpenings        Int              @default(1) @map("number_of_openings")
   status                  JobStatus        @default(DRAFT)
+  postedByType            JobPostedByType  @map("posted_by_type")
   paymentManagedByJoballa Boolean          @default(false) @map("payment_managed_by_joballa")
   adminNotes              String?          @map("admin_notes") @db.Text
   approvedByAdminId       String?          @map("approved_by_admin_id") @db.Uuid

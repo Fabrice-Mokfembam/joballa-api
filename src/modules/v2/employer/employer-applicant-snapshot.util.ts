@@ -41,6 +41,7 @@ export type ApplicantEducationEntry = {
 };
 
 export type ApplicantDocumentEntry = {
+  id?: string;
   name: string;
   fileName?: string;
   type?: string;
@@ -335,6 +336,7 @@ function mapEducationFromJson(rows: unknown): ApplicantEducationEntry[] {
 }
 
 function mapDocumentRow(input: {
+  id?: string;
   fileName?: string;
   name?: string;
   fileType?: string;
@@ -357,6 +359,7 @@ function mapDocumentRow(input: {
   const url =
     nonEmptyString(input.fileUrl) ?? nonEmptyString(input.url) ?? undefined;
   return {
+    id: nonEmptyString(input.id) ?? undefined,
     name,
     fileName: name,
     type,
@@ -378,6 +381,7 @@ function mapSupportingDocumentRows(
   return rows
     .map((doc) =>
       mapDocumentRow({
+        id: doc.id,
         fileName: doc.fileName,
         fileType: doc.fileType,
         fileUrl: doc.fileUrl,

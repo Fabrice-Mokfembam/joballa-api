@@ -20,6 +20,7 @@ import {
 } from './admin-api-format';
 import {
   employmentTypeToApi,
+  jobPostedByTypeToApi,
   providerToApi,
   roleToApi,
   workModeToApi,
@@ -153,6 +154,7 @@ export function mapJobRow(
     id: job.id,
     title: job.title,
     status: jobStatusToAdminApi(job.status),
+    postedByType: jobPostedByTypeToApi(job.postedByType),
     employmentType: employmentTypeToApi(job.employmentType),
     jobType: workModeToApi(job.workMode),
     country: job.country,

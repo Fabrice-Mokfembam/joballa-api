@@ -1,6 +1,15 @@
+import { BadRequestException } from '@nestjs/common';
 import type { ApplicantProfileSnapshot } from '../employer/employer-applicant-snapshot.util';
 
+/** Aligned with joballa-web `FIELD_LIMITS`. */
+const CUSTOMIZE_FIELD_LIMITS = {
+  professionalTitle: 120,
+  bio: 2000,
+  coverNote: 500,
+} as const;
+
 export type CustomizeProfileData = {
+  professionalTitle?: string;
   professionalSummary?: string;
   bio?: string;
   skills?: string[];
@@ -17,6 +26,7 @@ export function normalizeCustomizeBody(
   body: Record<string, unknown>,
 ): CustomizeProfileData {
   return {
+    professionalTitle: maybeStr(body.professionalTitle),
     professionalSummary: maybeStr(body.professionalSummary),
     bio: maybeStr(body.bio) ?? maybeStr(body.professionalSummary),
     skills: maybeStrArray(body.skills),
@@ -28,6 +38,59 @@ export function normalizeCustomizeBody(
     detachedCertificationIds: maybeStrArray(body.detachedCertificationIds),
     detachedDocumentIds: maybeStrArray(body.detachedDocumentIds),
   };
+}
+
+export function mergeCustomizeProfile(
+  existing: CustomizeProfileData | null | undefined,
+  incoming: CustomizeProfileData,
+): CustomizeProfileData {
+  const merged: CustomizeProfileData = { ...(existing ?? {}) };
+  const keys: (keyof CustomizeProfileData)[] = [
+    'professionalTitle',
+    'professionalSummary',
+    'bio',
+    'skills',
+    'languages',
+    'region',
+    'city',
+    'detachedWorkHistoryIds',
+    'detachedEducationIds',
+    'detachedCertificationIds',
+    'detachedDocumentIds',
+  ];
+  for (const key of keys) {
+    if (incoming[key] !== undefined) {
+      (merged as Record<string, unknown>)[key] = incoming[key];
+    }
+  }
+  return merged;
+}
+
+export function validateCustomizeProfileLimits(
+  data: CustomizeProfileData,
+): void {
+  if (
+    data.professionalTitle &&
+    data.professionalTitle.length > CUSTOMIZE_FIELD_LIMITS.professionalTitle
+  ) {
+    throw new BadRequestException(
+      `Professional title must be at most ${CUSTOMIZE_FIELD_LIMITS.professionalTitle} characters.`,
+    );
+  }
+  const summary = data.professionalSummary ?? data.bio;
+  if (summary && summary.length > CUSTOMIZE_FIELD_LIMITS.bio) {
+    throw new BadRequestException(
+      `Bio / professional summary must be at most ${CUSTOMIZE_FIELD_LIMITS.bio} characters.`,
+    );
+  }
+}
+
+export function validateCoverNoteLimit(coverNote: string | undefined): void {
+  if (coverNote && coverNote.length > CUSTOMIZE_FIELD_LIMITS.coverNote) {
+    throw new BadRequestException(
+      `Cover note must be at most ${CUSTOMIZE_FIELD_LIMITS.coverNote} characters.`,
+    );
+  }
 }
 
 export function applyCustomizeToSnapshot(
@@ -81,6 +144,7 @@ export function applyCustomizeToSnapshot(
   ) as ApplicantProfileSnapshot['certifications'];
 
   const documents = (snapshot.documents ?? []).filter((doc) => {
+    if (doc.id && detachedDoc.has(doc.id)) return false;
     if (doc.name && detachedDoc.has(doc.name)) return false;
     if (doc.url && detachedDoc.has(doc.url)) return false;
     return true;
@@ -88,6 +152,12 @@ export function applyCustomizeToSnapshot(
 
   return {
     ...snapshot,
+    professionalTitle:
+      customized.professionalTitle ?? snapshot.professionalTitle,
+    headline:
+      customized.professionalTitle ??
+      snapshot.headline ??
+      snapshot.professionalTitle,
     professionalSummary: summary ?? snapshot.professionalSummary,
     summary: summary ?? snapshot.summary,
     bio: summary ?? snapshot.bio,

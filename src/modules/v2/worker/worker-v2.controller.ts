@@ -118,6 +118,15 @@ export class WorkerV2Controller {
     return this.workerService.deletePostedJob(user, jobId);
   }
 
+  @Patch('posted-jobs/:jobId/status')
+  updatePostedJobStatus(
+    @CurrentUser() user: LocalAuthUser,
+    @Param('jobId') jobId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.workerService.updatePostedJobStatus(user, jobId, body);
+  }
+
   @Get('applicants/filters')
   applicantFilters(@CurrentUser() user: LocalAuthUser) {
     return this.workerService.applicantFilters(user);
@@ -175,6 +184,31 @@ export class WorkerV2Controller {
     @Param('applicationId') applicationId: string,
   ) {
     return this.workerService.applicantDetail(user, applicationId);
+  }
+
+  @Get('workforce')
+  workforce(
+    @CurrentUser() user: LocalAuthUser,
+    @Query() query: Record<string, unknown>,
+  ) {
+    return this.workerService.workforce(user, query);
+  }
+
+  @Patch('workforce/:workerId/status')
+  updateWorkforceStatus(
+    @CurrentUser() user: LocalAuthUser,
+    @Param('workerId') workerId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.workerService.updateWorkforceStatus(user, workerId, body);
+  }
+
+  @Get('workforce/:workerId')
+  workforceDetail(
+    @CurrentUser() user: LocalAuthUser,
+    @Param('workerId') workerId: string,
+  ) {
+    return this.workerService.workforceDetail(user, workerId);
   }
 
   @Get('jobs')

@@ -1,4 +1,3 @@
-import { ApplicationStatus } from '@prisma/client';
 import {
   resolveApplicantTopSkills,
   resolveWorkerDisplayName,
@@ -106,32 +105,12 @@ export function mapJobOwnerApplicantDetail(
   documentScope: DocumentUrlContext['scope'],
   mapJobDetail: (job: any) => unknown,
 ) {
-  const snapshotOnly = app.status !== ApplicationStatus.HIRED;
-  const profileSnapshot = buildSnapshot(app, snapshotOnly);
+  const profileSnapshot = buildSnapshot(app, true);
   const documents = enrichDocuments(app, profileSnapshot, documentScope);
   const attachedDocuments = enrichApplicantDocuments(
     normalizeAttachedDocuments(app.attachedDocuments),
     snapshotContext(app, documentScope),
   );
-
-  const liveProfile =
-    app.status === ApplicationStatus.HIRED && app.worker?.workerProfile
-      ? {
-          fullName: app.worker.workerProfile.fullName,
-          professionalTitle: app.worker.workerProfile.professionalTitle,
-          shortBio: app.worker.workerProfile.shortBio,
-          city: app.worker.workerProfile.city,
-          region: app.worker.workerProfile.region,
-          country: app.worker.workerProfile.country,
-          skills: app.worker.workerProfile.skills ?? [],
-          verificationStatus: verificationToApi(
-            app.worker.workerProfile.verificationStatus,
-          ),
-          photoUrl: app.worker.photoUrl,
-          phone: app.worker.phone,
-          email: app.worker.email,
-        }
-      : null;
 
   return {
     ...mapJobOwnerApplicantListItem(app, documentScope),
@@ -141,7 +120,7 @@ export function mapJobOwnerApplicantDetail(
     employerNotes: app.employerNotes ?? null,
     attachedDocuments,
     profileSnapshot: { ...profileSnapshot, documents },
-    liveProfile,
+    liveProfile: null,
     job: mapJobDetail(app.job),
   };
 }

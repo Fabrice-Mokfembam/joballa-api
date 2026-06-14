@@ -6,6 +6,7 @@ import {
   EmploymentType,
   EngagementStatus,
   InformalRequestStatus,
+  JobPostedByType,
   JobStatus,
   MomoProvider,
   NotificationType,
@@ -78,6 +79,10 @@ export function payStructureToApi(value: PayStructure) {
 
 export function jobStatusToApi(value: JobStatus) {
   return value.toLowerCase();
+}
+
+export function jobPostedByTypeToApi(value: JobPostedByType) {
+  return value === JobPostedByType.WORKER ? 'worker' : 'company';
 }
 
 export function applicationStatusToApi(value: ApplicationStatus) {

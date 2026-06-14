@@ -15,6 +15,7 @@ import {
   ExperienceLevel,
   InformalRequestStatus,
   JobStatus,
+  JobPostedByType,
   KycType,
   MomoProvider,
   NotificationType,
@@ -59,6 +60,7 @@ import {
   engagementStatusToApi,
   fileTypeFromMime,
   informalStatusToApi,
+  jobPostedByTypeToApi,
   jobStatusToApi,
   languageToApi,
   pageParams,
@@ -72,7 +74,10 @@ import {
 } from '../shared/api-format';
 import {
   applyCustomizeToSnapshot,
+  mergeCustomizeProfile,
   normalizeCustomizeBody,
+  validateCoverNoteLimit,
+  validateCustomizeProfileLimits,
 } from './worker-application-draft.util';
 import { deriveAvailableForHire } from './worker-availability.util';
 import { validateCredentialUrl } from './worker-credential-url.util';
@@ -384,18 +389,20 @@ export class WorkerV2Service {
     });
 
     if (draft?.customizedData) {
-      profileSnapshot = applyCustomizeToSnapshot(
-        profileSnapshot,
-        draft.customizedData as ReturnType<typeof normalizeCustomizeBody>,
+      const customized = normalizeCustomizeBody(
+        draft.customizedData as Record<string, unknown>,
       );
+      validateCustomizeProfileLimits(customized);
+      profileSnapshot = applyCustomizeToSnapshot(profileSnapshot, customized);
     }
 
     const coverNote =
       typeof body.coverNote === 'string'
-        ? body.coverNote
+        ? body.coverNote.trim() || undefined
         : typeof body.jobSpecificNote === 'string'
-          ? body.jobSpecificNote
+          ? body.jobSpecificNote.trim() || undefined
           : undefined;
+    validateCoverNoteLimit(coverNote);
 
     let application;
     try {
@@ -616,6 +623,7 @@ export class WorkerV2Service {
           (body.requestedDocuments as object[] | undefined) ?? [],
         numberOfOpenings: Number(body.numberOfOpenings ?? 1),
         status,
+        postedByType: JobPostedByType.WORKER,
         paymentManagedByJoballa: Boolean(body.paymentManagedByJoballa),
       },
       include: this.postedJobInclude(),
@@ -649,7 +657,8 @@ export class WorkerV2Service {
 
   async postedJobDetail(user: LocalAuthUser, jobId: string) {
     const job = await this.findOwnedPostedJob(user.id, jobId);
-    return this.mapPostedJobDetail(job);
+    const rejectionReason = await this.loadJobRejectionReason(jobId);
+    return this.mapPostedJobDetail(job, rejectionReason);
   }
 
   async updatePostedJob(
@@ -765,6 +774,105 @@ export class WorkerV2Service {
       where: { id: jobId, ownerId: user.id },
     });
     return { ok: true };
+  }
+
+  async updatePostedJobStatus(
+    user: LocalAuthUser,
+    jobId: string,
+    body: Record<string, unknown>,
+  ) {
+    const current = await this.findOwnedPostedJob(user.id, jobId);
+    let status = this.requiredEnum(JobStatus, body.status, 'status');
+    if (status === JobStatus.PAUSED) {
+      status = JobStatus.CLOSED;
+    }
+    if (status === JobStatus.ACTIVE && current.status !== JobStatus.PAUSED) {
+      throw new BadRequestException(
+        'Jobs must be approved by Joballa admin before going active. Use pause to resume an already approved job.',
+      );
+    }
+    const job = await this.prisma.job.update({
+      where: { id: jobId },
+      data: {
+        status,
+        approvedAt:
+          status === JobStatus.ACTIVE
+            ? (current.approvedAt ?? new Date())
+            : undefined,
+      },
+      include: this.postedJobInclude(),
+    });
+    const rejectionReason = await this.loadJobRejectionReason(jobId);
+    return this.mapPostedJobDetail(job, rejectionReason);
+  }
+
+  async workforce(user: LocalAuthUser, query: Record<string, unknown>) {
+    const { page, limit, skip } = pageParams(query.page, query.limit);
+    const status = parseEnum(EngagementStatus, query.status);
+    const where = { employerId: user.id, ...(status ? { status } : {}) };
+    const [rows, total] = await Promise.all([
+      this.prisma.workEngagement.findMany({
+        where,
+        skip,
+        take: limit,
+        include: this.jobOwnerEngagementInclude(),
+        orderBy: { startedAt: 'desc' },
+      }),
+      this.prisma.workEngagement.count({ where }),
+    ]);
+    return paginated(
+      rows.map((e) => this.mapJobOwnerWorkforce(e)),
+      total,
+      page,
+      limit,
+    );
+  }
+
+  async workforceDetail(user: LocalAuthUser, workerId: string) {
+    const row = await this.prisma.workEngagement.findFirst({
+      where: { employerId: user.id, workerId },
+      include: { ...this.jobOwnerEngagementInclude(), payments: true },
+      orderBy: { startedAt: 'desc' },
+    });
+    if (!row) throw new NotFoundException('Worker engagement not found.');
+    return {
+      ...this.mapJobOwnerWorkforce(row),
+      profileSnapshot: row.application.profileSnapshot,
+      publicProfile: row.worker.workerProfile,
+      taskNotes: row.taskNotes,
+      terminationReason: row.terminationReason,
+      payments: row.payments.map((p) => this.mapJobOwnerPayment(p, row)),
+    };
+  }
+
+  async updateWorkforceStatus(
+    user: LocalAuthUser,
+    workerId: string,
+    body: Record<string, unknown>,
+  ) {
+    const status = this.requiredEnum(EngagementStatus, body.status, 'status');
+    const engagementId = String(body.engagementId ?? '');
+    const row = await this.prisma.workEngagement.update({
+      where: { id: engagementId, employerId: user.id, workerId },
+      data: {
+        status,
+        terminationReason:
+          status === EngagementStatus.TERMINATED
+            ? maybeString(body.reason)
+            : undefined,
+        completedAt:
+          status === EngagementStatus.COMPLETED ? new Date() : undefined,
+        terminatedAt:
+          status === EngagementStatus.TERMINATED ? new Date() : undefined,
+      },
+      include: { ...this.jobOwnerEngagementInclude(), payments: true },
+    });
+    return {
+      ...this.mapJobOwnerWorkforce(row),
+      taskNotes: row.taskNotes,
+      terminationReason: row.terminationReason,
+      payments: row.payments.map((p) => this.mapJobOwnerPayment(p, row)),
+    };
   }
 
   async applicantFilters(user: LocalAuthUser) {
@@ -970,7 +1078,19 @@ export class WorkerV2Service {
       where: { id: jobId, status: JobStatus.ACTIVE },
     });
     if (!job) throw new NotFoundException('Job not found.');
-    const customizedData = normalizeCustomizeBody(body);
+    const existing = await this.prisma.applicationProfileDraft.findUnique({
+      where: { workerId_jobId: { workerId: user.id, jobId } },
+    });
+    const incoming = normalizeCustomizeBody(body);
+    validateCustomizeProfileLimits(incoming);
+    const customizedData = mergeCustomizeProfile(
+      existing?.customizedData
+        ? normalizeCustomizeBody(
+            existing.customizedData as Record<string, unknown>,
+          )
+        : undefined,
+      incoming,
+    );
     const profile = (await this.requireWorker(user.id)).workerProfile!;
     const draft = await this.prisma.applicationProfileDraft.upsert({
       where: { workerId_jobId: { workerId: user.id, jobId } },
@@ -1821,7 +1941,69 @@ export class WorkerV2Service {
     return { buffer, fileName, contentType };
   }
 
-  private mapPostedJobCard(job: any) {
+  private async loadJobRejectionReason(jobId: string): Promise<string | null> {
+    const row = await this.prisma.rejectionReason.findFirst({
+      where: { targetType: SubmissionTargetType.JOB, targetId: jobId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return row?.reasonText ?? null;
+  }
+
+  private jobOwnerEngagementInclude() {
+    return {
+      job: true,
+      worker: { include: { workerProfile: true, workerPaymentAccounts: true } },
+      application: true,
+    } as const;
+  }
+
+  private mapJobOwnerWorkforce(e: any) {
+    const workerName =
+      e.worker.workerProfile?.fullName ??
+      e.worker.email ??
+      e.worker.phone ??
+      'Worker';
+    return {
+      id: e.workerId,
+      engagementId: e.id,
+      workerId: e.workerId,
+      workerName,
+      workerPhotoUrl: e.worker.photoUrl,
+      jobId: e.jobId,
+      jobTitle: e.job.title,
+      roleLabel: e.roleLabel,
+      startDate: e.startDate.toISOString().slice(0, 10),
+      endDate: e.endDate?.toISOString().slice(0, 10) ?? null,
+      status: engagementStatusToApi(e.status),
+      payRate: e.payRate,
+      payCurrency: e.payCurrency,
+      payStructure: payStructureToApi(e.payStructure),
+      paymentManagedByJoballa: e.job.paymentManagedByJoballa,
+    };
+  }
+
+  private mapJobOwnerPayment(p: any, engagement: any) {
+    const workerName =
+      engagement.worker.workerProfile?.fullName ??
+      engagement.worker.email ??
+      engagement.worker.phone ??
+      'Worker';
+    return {
+      id: p.id,
+      engagementId: p.engagementId,
+      workerId: p.workerId,
+      workerName,
+      jobTitle: engagement.job.title,
+      amount: Number(p.amount),
+      currency: p.currency,
+      status: p.status.toLowerCase(),
+      provider: providerToApi(p.mobileMoneyProvider),
+      initiatedAt: p.initiatedAt.toISOString(),
+      completedAt: p.completedAt?.toISOString() ?? null,
+    };
+  }
+
+  private mapPostedJobCard(job: any, rejectionReason: string | null = null) {
     const submitted =
       job.applications?.filter(
         (a: { status: ApplicationStatus }) =>
@@ -1860,21 +2042,22 @@ export class WorkerV2Service {
       payCurrency: job.payCurrency,
       payStructure: payStructureToApi(job.payStructure),
       status: jobStatusToApi(job.status),
+      postedByType: jobPostedByTypeToApi(job.postedByType),
       paymentManagedByJoballa: job.paymentManagedByJoballa,
       applicantsCount:
         job._count?.applications ?? submitted + shortlisted + hired,
       shortlistedCount: shortlisted,
       hiredCount: hired,
-      rejectionReason: null,
+      rejectionReason,
       changeRequest: null,
       createdAt: job.createdAt.toISOString(),
       approvedAt: job.approvedAt?.toISOString() ?? null,
     };
   }
 
-  private mapPostedJobDetail(job: any) {
+  private mapPostedJobDetail(job: any, rejectionReason: string | null = null) {
     return {
-      ...this.mapPostedJobCard(job),
+      ...this.mapPostedJobCard(job, rejectionReason),
       description: job.description,
       requirements: job.requirements,
       responsibilities: job.responsibilities,
@@ -1924,6 +2107,7 @@ export class WorkerV2Service {
       payStructure: payStructureToApi(job.payStructure),
       duration: job.duration,
       status: jobStatusToApi(job.status),
+      postedByType: jobPostedByTypeToApi(job.postedByType),
       paymentManagedByJoballa: job.paymentManagedByJoballa,
       requiredSkills: job.requiredSkills,
       matchScore: null,
