@@ -1,12 +1,8 @@
-/**
- * Employer portal smoke tests — API base URL.
- */
+import { resolveApiUrl } from '../../lib/resolve-api-url.mjs';
 
-export const DEFAULT_EMPLOYER_API_URL = 'https://joballa-api.onrender.com';
-
+/** Employer portal smoke tests — API base URL from env only. */
 export function getBaseUrl() {
-  const raw = process.env.API_URL?.trim() || DEFAULT_EMPLOYER_API_URL;
-  return raw.replace(/\/$/, '');
+  return resolveApiUrl({ localFlag: 'JOBALLA_EMPLOYER_USE_LOCAL' });
 }
 
 export function isRemoteApi(base = getBaseUrl()) {

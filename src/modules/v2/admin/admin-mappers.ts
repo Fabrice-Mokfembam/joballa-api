@@ -2,14 +2,21 @@ import {
   Role,
   VerificationStatus,
   type AdminAccount,
+  type Certification,
   type Department,
   type Dispute,
+  type Education,
   type EmployerDocument,
+  type EmployerProfile,
   type Job,
   type KycSubmission,
   JobPostedByType,
   type Payment,
+  type SupportingDocument,
   type User,
+  type WorkExperience,
+  type WorkerPaymentAccount,
+  type WorkerProfile,
 } from '@prisma/client';
 import {
   disputeStatusToApi,
@@ -251,6 +258,7 @@ export function mapPlatformUser(
     } | null;
     employerProfile: {
       companyName: string;
+      companyLogoUrl?: string | null;
       verificationStatus: VerificationStatus;
     } | null;
   },
@@ -261,6 +269,10 @@ export function mapPlatformUser(
     user.workerProfile?.verificationStatus,
     user.employerProfile?.verificationStatus,
   );
+  const photoUrl =
+    user.role === Role.EMPLOYER
+      ? (user.employerProfile?.companyLogoUrl ?? user.photoUrl)
+      : user.photoUrl;
   return {
     id: user.id,
     email: user.email,
@@ -271,7 +283,7 @@ export function mapPlatformUser(
     country: user.country,
     city: user.city,
     region: user.region,
-    photoUrl: user.photoUrl,
+    photoUrl,
     preferredLanguage: user.preferredLanguage === 'FRE' ? 'FRE' : 'ENG',
     createdByAdmin: user.createdByAdminId,
     createdAt: user.createdAt.toISOString(),
@@ -414,4 +426,144 @@ export function isReservedOtherDepartmentName(name: string): boolean {
 export function profileScopeWhere(ctx: { isSuperAdmin: boolean; id: string }) {
   if (ctx.isSuperAdmin) return { createdByAdminId: { not: null } };
   return { createdByAdminId: ctx.id };
+}
+
+export const ADMIN_USER_DETAIL_INCLUDE = {
+  workerProfile: true,
+  employerProfile: true,
+  workExperiences: { orderBy: { startDate: 'desc' as const } },
+  educationItems: { orderBy: { startDate: 'desc' as const } },
+  certifications: { orderBy: { issueDate: 'desc' as const } },
+  supportingDocuments: { orderBy: { createdAt: 'desc' as const } },
+  workerPaymentAccounts: {
+    orderBy: [{ isPrimary: 'desc' as const }, { createdAt: 'asc' as const }],
+  },
+  workerKycSubmissions: { orderBy: { createdAt: 'desc' as const }, take: 1 },
+};
+
+type AdminUserDetailSource = User & {
+  workerProfile: WorkerProfile | null;
+  employerProfile: EmployerProfile | null;
+  workExperiences?: WorkExperience[];
+  educationItems?: Education[];
+  certifications?: Certification[];
+  supportingDocuments?: SupportingDocument[];
+  workerPaymentAccounts?: WorkerPaymentAccount[];
+  workerKycSubmissions?: KycSubmission[];
+};
+
+function isoDate(value: Date | null | undefined) {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+export function mapAdminUserDetail(user: AdminUserDetailSource) {
+  const isWorker = user.role === Role.WORKER;
+  const workerProfile = user.workerProfile;
+  const employerProfile = user.employerProfile;
+  const verificationStatus = isWorker
+    ? workerProfile?.verificationStatus
+    : employerProfile?.verificationStatus;
+  const verified = isVerifiedUser(
+    roleToApi(user.role),
+    workerProfile?.verificationStatus,
+    employerProfile?.verificationStatus,
+  );
+  const photoUrl =
+    user.role === Role.EMPLOYER
+      ? (employerProfile?.companyLogoUrl ?? user.photoUrl)
+      : user.photoUrl;
+  const city =
+    user.city ?? workerProfile?.city ?? employerProfile?.city ?? null;
+  const region =
+    user.region ?? workerProfile?.region ?? employerProfile?.region ?? null;
+  const country =
+    user.country ?? workerProfile?.country ?? employerProfile?.country ?? null;
+
+  return {
+    id: user.id,
+    profileId: isWorker ? workerProfile?.id : employerProfile?.id,
+    email: user.email,
+    phone: user.phone,
+    role: roleToApi(user.role),
+    isVerified: verified,
+    isActive: user.accountStatus === 'ACTIVE',
+    accountStatus:
+      user.accountStatus === 'SUSPENDED' ? 'suspended' : 'active',
+    country,
+    city,
+    region,
+    photoUrl,
+    preferredLanguage: user.preferredLanguage === 'FRE' ? 'FRE' : 'ENG',
+    createdByAdmin: user.createdByAdminId,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
+    name: isWorker
+      ? (workerProfile?.fullName ?? user.email ?? user.phone ?? 'Unknown user')
+      : (employerProfile?.companyName ?? user.email ?? 'Unknown user'),
+    professionalTitle: isWorker
+      ? (workerProfile?.professionalTitle ?? null)
+      : (employerProfile?.contactPersonTitle ?? null),
+    shortBio: isWorker
+      ? workerProfile?.shortBio
+      : employerProfile?.description,
+    tagline: employerProfile?.tagline ?? null,
+    companyName: employerProfile?.companyName ?? null,
+    industry: employerProfile?.industry ?? null,
+    website: employerProfile?.website ?? null,
+    contactPersonName: employerProfile?.contactPersonName ?? null,
+    dateOfBirth: isoDate(workerProfile?.dateOfBirth ?? null),
+    skills: workerProfile?.skills ?? [],
+    languages: workerProfile?.languages ?? [],
+    industries: workerProfile?.preferredJobCategories ?? [],
+    preferredJobTypes: (workerProfile?.preferredJobTypes ?? []).map((entry) =>
+      employmentTypeToApi(entry),
+    ),
+    profileViews: workerProfile?.profileViews ?? 0,
+    verificationStatus: verificationStatus?.toLowerCase() ?? 'not_submitted',
+    availabilityStatus: workerProfile?.availabilityStatus ?? null,
+    workHistories: (user.workExperiences ?? []).map((item) => ({
+      id: item.id,
+      jobTitle: item.jobTitle,
+      companyName: item.companyName,
+      location: item.location,
+      startDate: isoDate(item.startDate)!,
+      endDate: isoDate(item.endDate),
+      isCurrent: item.isCurrent,
+      description: item.description,
+    })),
+    educations: (user.educationItems ?? []).map((item) => ({
+      id: item.id,
+      degree: item.degree,
+      institution: item.institutionName,
+      fieldOfStudy: item.fieldOfStudy,
+      startDate: isoDate(item.startDate)!,
+      endDate: isoDate(item.endDate),
+      isCurrent: item.isCurrent,
+      description: item.description,
+    })),
+    certifications: (user.certifications ?? []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      issuer: item.issuer,
+      credentialUrl: item.credentialUrl,
+      issueDate: isoDate(item.issueDate),
+      expiryDate: isoDate(item.expiryDate),
+      description: item.description,
+    })),
+    documents: (user.supportingDocuments ?? []).map((item) => ({
+      id: item.id,
+      fileName: item.fileName,
+      fileUrl: item.fileUrl,
+      fileType: item.fileType,
+      label: item.documentLabel,
+    })),
+    paymentMethods: (user.workerPaymentAccounts ?? []).map((item) => ({
+      id: item.id,
+      provider: providerToApi(item.provider),
+      phoneNumber: item.phoneNumber,
+      isPrimary: item.isPrimary,
+    })),
+    latestKycStatus:
+      user.workerKycSubmissions?.[0]?.status?.toLowerCase() ?? null,
+  };
 }

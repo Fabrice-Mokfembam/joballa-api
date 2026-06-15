@@ -1,25 +1,27 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module';
+import { createNestTestApp } from './helpers/create-nest-app';
 
-describe('AppController (e2e)', () => {
+describe('App (e2e)', () => {
   let app: INestApplication<App>;
 
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
+  beforeAll(async () => {
+    app = await createNestTestApp();
+  }, 120_000);
 
-    app = moduleFixture.createNestApplication();
-    await app.init();
+  afterAll(async () => {
+    await app?.close();
   });
 
-  it('/ (GET)', () => {
+  it('GET / — terminal status page', () => {
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
-      .expect('Hello World!');
+      .expect('Content-Type', /html/)
+      .expect((res) => {
+        expect(res.text).toContain('<title>Joballa Backend Terminal</title>');
+        expect(res.text).toContain('JOBALLA BACKEND ONLINE');
+      });
   });
 });

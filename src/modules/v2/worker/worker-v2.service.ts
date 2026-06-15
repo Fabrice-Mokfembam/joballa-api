@@ -28,6 +28,8 @@ import {
   WorkMode,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { NotificationsService } from '../../notifications/notifications.service';
+import { PushService } from '../../notifications/push.service';
 import {
   buildApplicantProfileSnapshot,
   mergeApplicantDocuments,
@@ -82,7 +84,6 @@ import {
 import { deriveAvailableForHire } from './worker-availability.util';
 import { validateCredentialUrl } from './worker-credential-url.util';
 import {
-  emitWorkerNotification,
   notificationApiType,
   notificationDeepLink,
 } from './worker-notification.util';
@@ -97,7 +98,11 @@ import {
 
 @Injectable()
 export class WorkerV2Service {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+    private readonly pushService: PushService,
+  ) {}
 
   async me(user: LocalAuthUser) {
     const full = await this.requireWorker(user.id);
@@ -453,7 +458,7 @@ export class WorkerV2Service {
       where: { workerId: user.id, jobId },
     });
 
-    await emitWorkerNotification(this.prisma, {
+    await this.notificationsService.emitWorkerNotification({
       userId: user.id,
       type: NotificationType.APPLICATION_RECEIVED,
       title: 'Application submitted',
@@ -1718,7 +1723,7 @@ export class WorkerV2Service {
       data: { verificationStatus: VerificationStatus.PENDING },
     });
     await this.recomputeCompleteness(user.id);
-    await emitWorkerNotification(this.prisma, {
+    await this.notificationsService.emitWorkerNotification({
       userId: user.id,
       type: NotificationType.VERIFICATION_UPDATE,
       title: 'KYC submitted',
@@ -1913,6 +1918,17 @@ export class WorkerV2Service {
       update: body,
     });
     return this.mapNotificationSettings(row);
+  }
+
+  async upsertPushToken(
+    user: LocalAuthUser,
+    body: { token: string; platform: string },
+  ) {
+    return this.pushService.upsertPushToken(user.id, body.token, body.platform);
+  }
+
+  async deletePushTokens(user: LocalAuthUser) {
+    return this.pushService.deletePushTokensForUser(user.id);
   }
 
   async updateLanguage(user: LocalAuthUser, body: Record<string, unknown>) {
@@ -2455,6 +2471,7 @@ export class WorkerV2Service {
   private mapNotificationSettings(s: any) {
     return {
       inAppEnabled: s.inAppEnabled,
+      pushEnabled: s.pushEnabled ?? true,
       emailEnabled: s.emailEnabled,
       smsEnabled: s.smsEnabled,
       applicationUpdates: s.applicationUpdates,

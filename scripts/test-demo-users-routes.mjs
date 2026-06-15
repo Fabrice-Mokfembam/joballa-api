@@ -6,6 +6,7 @@
  *   JOBALLA_DEMO_USE_LOCAL=1 API_URL=http://127.0.0.1:8000 npm run test:demo-routes
  */
 import { loadRootDotenvOptional } from './lib/dotenv-lite.mjs';
+import { resolveApiUrl } from './lib/resolve-api-url.mjs';
 import { fetchJson } from './lib/fetch-json.mjs';
 import { resetFailed, exitCode, assert, skip, fail } from './worker-portal/lib/assert.mjs';
 import { runExtraWorkerTests } from './worker-portal/08-extra-routes.mjs';
@@ -16,12 +17,7 @@ import { teardown } from './worker-portal/lib/bootstrap.mjs';
 
 loadRootDotenvOptional();
 
-const base = (
-  process.env.API_URL?.trim() ||
-  (process.env.JOBALLA_DEMO_USE_LOCAL === '1'
-    ? `http://127.0.0.1:${process.env.PORT ?? '8000'}`
-    : 'https://joballa-api.onrender.com')
-).replace(/\/$/, '');
+const base = resolveApiUrl({ localFlag: 'JOBALLA_DEMO_USE_LOCAL' });
 
 const WORKER_EMAIL =
   process.env.SEED_WORKER_EMAIL?.trim() || 'fabricemokfembam@gmail.com';

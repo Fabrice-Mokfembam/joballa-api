@@ -1,5 +1,4 @@
-import { NotificationType, Prisma } from '@prisma/client';
-import type { PrismaService } from '../../../prisma/prisma.service';
+import { NotificationType } from '@prisma/client';
 
 export type WorkerNotificationInput = {
   userId: string;
@@ -9,27 +8,6 @@ export type WorkerNotificationInput = {
   relatedType?: string;
   relatedId?: string;
 };
-
-export async function emitWorkerNotification(
-  prisma: PrismaService,
-  input: WorkerNotificationInput,
-) {
-  const settings = await prisma.notificationSettings.findUnique({
-    where: { userId: input.userId },
-  });
-  if (settings && !settings.inAppEnabled) return null;
-
-  return prisma.notification.create({
-    data: {
-      userId: input.userId,
-      type: input.type,
-      title: input.title,
-      body: input.body,
-      relatedType: input.relatedType,
-      relatedId: input.relatedId,
-    },
-  });
-}
 
 export function notificationDeepLink(
   type: NotificationType,

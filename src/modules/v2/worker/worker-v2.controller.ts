@@ -768,6 +768,19 @@ export class WorkerV2Controller {
     return this.workerService.updateNotificationSettings(user, body);
   }
 
+  @Put('push-tokens')
+  upsertPushToken(
+    @CurrentUser() user: LocalAuthUser,
+    @Body() body: { token: string; platform: string },
+  ) {
+    return this.workerService.upsertPushToken(user, body);
+  }
+
+  @Delete('push-tokens')
+  deletePushTokens(@CurrentUser() user: LocalAuthUser) {
+    return this.workerService.deletePushTokens(user);
+  }
+
   @Patch('settings/language')
   updateLanguage(
     @CurrentUser() user: LocalAuthUser,

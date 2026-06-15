@@ -323,6 +323,7 @@ model User {
   payerPayments         Payment[]              @relation("PayerPayments")
   notifications              Notification[]
   notificationSettings       NotificationSettings?
+  pushTokens                 PushToken[]
   applicationProfileDrafts   ApplicationProfileDraft[] @relation("WorkerApplicationDrafts")
   disputesRaised             Dispute[]                   @relation("DisputesRaised")
   disputesAgainst            Dispute[]                   @relation("DisputesAgainst")
@@ -932,10 +933,25 @@ model Notification {
   @@map("notifications")
 }
 
+model PushToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String
+  platform  String   @default("unknown")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, platform])
+  @@index([userId])
+  @@map("push_tokens")
+}
+
 model NotificationSettings {
   id                 String   @id @default(uuid()) @db.Uuid
   userId             String   @unique @map("user_id") @db.Uuid
   inAppEnabled       Boolean  @default(true) @map("in_app_enabled")
+  pushEnabled        Boolean  @default(true) @map("push_enabled")
   emailEnabled       Boolean  @default(true) @map("email_enabled")
   smsEnabled         Boolean  @default(true) @map("sms_enabled")
   applicationUpdates Boolean  @default(true) @map("application_updates")

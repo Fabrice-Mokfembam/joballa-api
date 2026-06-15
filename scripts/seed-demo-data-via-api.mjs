@@ -9,6 +9,7 @@
  *   SEED_WORKER_EMAIL, SEED_EMPLOYER_EMAIL, SEED_PASSWORD, API_URL
  */
 import { loadRootDotenvOptional } from './lib/dotenv-lite.mjs';
+import { resolveApiUrl } from './lib/resolve-api-url.mjs';
 import { fetchJson } from './lib/fetch-json.mjs';
 import { sampleJobBody } from './employer-portal/lib/bootstrap.mjs';
 
@@ -20,12 +21,7 @@ const EMPLOYER_EMAIL =
   process.env.SEED_EMPLOYER_EMAIL?.trim() || 'fabricekongnyuy2@gmail.com';
 const PASSWORD = process.env.SEED_PASSWORD?.trim() || 'Thiago+123';
 
-const base = (
-  process.env.API_URL?.trim() ||
-  (process.env.JOBALLA_SEED_USE_LOCAL === '1'
-    ? `http://127.0.0.1:${process.env.PORT ?? '8000'}`
-    : 'https://joballa-api.onrender.com')
-).replace(/\/$/, '');
+const base = resolveApiUrl({ localFlag: 'JOBALLA_SEED_USE_LOCAL' });
 
 function log(step, detail) {
   console.log(detail ? `${step} — ${detail}` : step);

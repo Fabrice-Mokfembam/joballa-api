@@ -62,6 +62,8 @@ import {
   mapKycRow,
   mapPaymentRecord,
   mapPlatformUser,
+  mapAdminUserDetail,
+  ADMIN_USER_DETAIL_INCLUDE,
   mapSessionDepartments,
   profileScopeWhere,
   slugify,
@@ -1433,10 +1435,10 @@ export class AdminV2Service {
     this.adminContext.requirePermission(ctx, ADMIN_PERM.MANAGE_PLATFORM_USERS);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { workerProfile: true, employerProfile: true },
+      include: ADMIN_USER_DETAIL_INCLUDE,
     });
     if (!user) adminNotFound('User not found.');
-    return adminOk(mapPlatformUser(user));
+    return adminOk(mapAdminUserDetail(user));
   }
 
   async suspendUser(ctx: AdminContext, userId: string, req: Request) {
@@ -1596,7 +1598,7 @@ export class AdminV2Service {
   async getProfile(ctx: AdminContext, profileId: string) {
     this.adminContext.requirePermission(ctx, ADMIN_PERM.CREATE_PROFILES);
     const user = await this.findProfileUser(profileId, ctx);
-    return adminOk(this.mapProfile(user));
+    return adminOk(mapAdminUserDetail(user));
   }
 
   private async findProfileUser(profileId: string, ctx: AdminContext) {
@@ -1609,7 +1611,7 @@ export class AdminV2Service {
         ],
         ...profileScopeWhere(ctx),
       },
-      include: { workerProfile: true, employerProfile: true },
+      include: ADMIN_USER_DETAIL_INCLUDE,
     });
     if (!user) adminNotFound('Profile not found.');
     return user;

@@ -1,41 +1,17 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
-import cookieParser from 'cookie-parser';
+import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { AppModule } from '../src/app.module';
+import { createNestTestApp } from './helpers/create-nest-app';
+import { bootstrapWorkerAccessToken } from './helpers/bootstrap-e2e-session';
+import { expectPaginated } from './helpers/v2-response';
 
-const WORKER_ID =
-  process.env.JOBALLA_WORKER_IDENTIFIER?.trim() || 'fabricemokfembam@gmail.com';
-const WORKER_PASSWORD =
-  process.env.JOBALLA_WORKER_PASSWORD?.trim() || 'Thiago+123';
-
-describe('Worker routes — May 2026 (e2e)', () => {
+describe('Worker v2 routes (e2e)', () => {
   let app: INestApplication<App>;
   let accessToken: string;
 
   beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-    app.use(cookieParser());
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
-    await app.init();
-
-    const login = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({ identifier: WORKER_ID, password: WORKER_PASSWORD });
-
-    if (login.status !== 200 || !login.body.accessToken) {
-      throw new Error(
-        `Worker login failed (${login.status}): ${JSON.stringify(login.body)}`,
-      );
-    }
-    accessToken = login.body.accessToken;
+    app = await createNestTestApp();
+    accessToken = await bootstrapWorkerAccessToken(app);
   }, 120_000);
 
   afterAll(async () => {
@@ -44,27 +20,26 @@ describe('Worker routes — May 2026 (e2e)', () => {
 
   const bearer = () => ({ Authorization: `Bearer ${accessToken}` });
 
-  it('GET /api/worker/me — profileStrengthBreakdown + profileViews', async () => {
+  it('GET /worker/me', async () => {
     const res = await request(app.getHttpServer())
-      .get('/api/worker/me')
+      .get('/worker/me')
       .set(bearer());
     expect(res.status).toBe(200);
-    expect(res.body.workerProfile.profileStrengthBreakdown).toBeDefined();
-    expect(typeof res.body.workerProfile.profileViews).toBe('number');
+    expect(res.body.role).toBe('worker');
+    expect(res.body.workerProfile).toBeDefined();
   });
 
-  it('GET /api/worker/profile — WorkerFullProfile', async () => {
+  it('GET /worker/profile', async () => {
     const res = await request(app.getHttpServer())
-      .get('/api/worker/profile')
+      .get('/worker/profile')
       .set(bearer());
     expect(res.status).toBe(200);
     expect(res.body.summary).toBeDefined();
-    expect(Array.isArray(res.body.paymentAccounts)).toBe(true);
   });
 
-  it('PUT /api/worker/profile', async () => {
+  it('PUT /worker/profile', async () => {
     const res = await request(app.getHttpServer())
-      .put('/api/worker/profile')
+      .put('/worker/profile')
       .set(bearer())
       .send({ city: 'Buea', skills: ['React', 'TypeScript'] });
     expect(res.status).toBe(200);
@@ -73,64 +48,44 @@ describe('Worker routes — May 2026 (e2e)', () => {
     );
   });
 
-  it('GET /api/worker/dashboard', async () => {
+  it('GET /worker/dashboard', async () => {
     const res = await request(app.getHttpServer())
-      .get('/api/worker/dashboard')
+      .get('/worker/dashboard')
       .set(bearer());
     expect(res.status).toBe(200);
-    expect(res.body.greeting).toBeDefined();
+    expect(res.body.welcomeName).toBeDefined();
     expect(res.body.stats).toBeDefined();
   });
 
-  it('GET /api/worker/jobs', async () => {
+  it('GET /worker/jobs', async () => {
     const res = await request(app.getHttpServer())
-      .get('/api/worker/jobs')
+      .get('/worker/jobs?page=1&limit=5')
       .set(bearer());
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.items)).toBe(true);
+    expectPaginated(res.body);
   });
 
-  it('GET /api/worker/jobs/applications', async () => {
+  it('GET /worker/applications', async () => {
     const res = await request(app.getHttpServer())
-      .get('/api/worker/jobs/applications')
+      .get('/worker/applications?page=1&limit=5')
       .set(bearer());
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.items)).toBe(true);
+    expectPaginated(res.body);
   });
 
-  it('GET /api/worker/notifications', async () => {
+  it('GET /worker/notifications', async () => {
     const res = await request(app.getHttpServer())
-      .get('/api/worker/notifications')
+      .get('/worker/notifications?page=1&limit=5')
       .set(bearer());
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.items)).toBe(true);
+    expectPaginated(res.body);
   });
 
-  it('GET /api/jobs — normalized job card', async () => {
+  it('GET /worker/earnings/transactions', async () => {
     const res = await request(app.getHttpServer())
-      .get('/api/jobs?page=1&limit=3')
+      .get('/worker/earnings/transactions?page=1&limit=5')
       .set(bearer());
     expect(res.status).toBe(200);
-    const first = res.body.items?.[0];
-    expect(first).toBeDefined();
-    expect(first).toHaveProperty('slug');
-    expect(first).toHaveProperty('companyName');
-    expect(first).toHaveProperty('hasApplied');
-    expect(first).toHaveProperty('saved');
-  });
-
-  it('GET /api/earnings/transactions/:id when a payment exists', async () => {
-    const list = await request(app.getHttpServer())
-      .get('/api/earnings/transactions?limit=1')
-      .set(bearer());
-    const id = list.body.items?.[0]?.id;
-    if (!id) {
-      return;
-    }
-    const res = await request(app.getHttpServer())
-      .get(`/api/earnings/transactions/${id}`)
-      .set(bearer());
-    expect(res.status).toBe(200);
-    expect(res.body.id).toBe(id);
+    expectPaginated(res.body);
   });
 });

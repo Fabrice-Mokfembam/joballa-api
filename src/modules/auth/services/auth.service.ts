@@ -304,13 +304,16 @@ export class AuthService {
     return this.finalizeSession(user, res);
   }
 
-  async logout(req: Request, res: Response, _userId?: string) {
+  async logout(req: Request, res: Response, userId?: string) {
     const raw = this.extractRefreshTokenRaw(req);
     if (raw) {
       const row = await this.refreshTokensRepository.findActiveByDigest(
         digestOpaqueToken(raw),
       );
       if (row) await this.refreshTokensRepository.deleteById(row.id);
+    }
+    if (userId) {
+      await this.prisma.pushToken.deleteMany({ where: { userId } });
     }
     this.clearRefreshCookie(res);
     return { message: 'Logged out' };

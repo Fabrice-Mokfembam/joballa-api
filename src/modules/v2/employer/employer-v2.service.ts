@@ -1229,6 +1229,7 @@ export class EmployerV2Service {
   private mapNotificationSettings(s: any) {
     return {
       inAppEnabled: s.inAppEnabled,
+      pushEnabled: s.pushEnabled ?? true,
       emailEnabled: s.emailEnabled,
       smsEnabled: s.smsEnabled,
       applicationUpdates: s.applicationUpdates,
